@@ -92,43 +92,6 @@ export async function signOut() {
 }
 
 
-export async function getProtectedDataTemplate() {
-    let mainUrl = process.env.NEXT_PUBLIC_API_URL;
-
-    // 2. Получаем доступ к хранилищу cookie из входящего запроса
-    const cookieStore = await cookies();
-    const sessionTokenCookie = cookieStore.get('better-auth.session_token');
-
-    // Если токена нет, то и запрашивать нечего
-    if (!sessionTokenCookie) {
-        console.error("Server Action: Cookie 'better-auth.session_token' not found.");
-        // Возвращаем false или объект с ошибкой, чтобы фронтенд мог это обработать
-        return false;
-    }
-
-    // 3. Формируем заголовки для исходящего запроса
-    const requestHeaders = new Headers();
-    // Устанавливаем заголовок 'Cookie', который и будет прочитан FastAPI
-    requestHeaders.set('Cookie', `better-auth.session_token=${sessionTokenCookie.value}`);
-
-    try {
-        let response = await fetch(`${mainUrl}/main_api_app/dashboard`,
-            {cache: "no-cache", headers: requestHeaders});
-        if (!response.ok) {
-            if (response.status === 404) {
-                return false;
-            }
-            throw new Error("Ошибка соединения с сервером.");
-        }
-        let result = await response.json();
-        return result;
-    } catch (error) {
-        console.error("Ошибка при получении данных:", error);
-        return false;
-    }
-}
-
-
 export async function getUnprotectedData() {
     let mainUrl = process.env.NEXT_PUBLIC_API_URL;
     try {
@@ -196,5 +159,42 @@ export async function createUnprotectedJsonData(data) {
     } catch (error) {
         console.error('Error submitting form:', error);
         return {success: false, message: 'Failed to connect to the server.'};
+    }
+}
+
+
+export async function getProtectedDataTemplate() {
+    let mainUrl = process.env.NEXT_PUBLIC_API_URL;
+
+    // 2. Получаем доступ к хранилищу cookie из входящего запроса
+    const cookieStore = await cookies();
+    const sessionTokenCookie = cookieStore.get('better-auth.session_token');
+
+    // Если токена нет, то и запрашивать нечего
+    if (!sessionTokenCookie) {
+        console.error("Server Action: Cookie 'better-auth.session_token' not found.");
+        // Возвращаем false или объект с ошибкой, чтобы фронтенд мог это обработать
+        return false;
+    }
+
+    // 3. Формируем заголовки для исходящего запроса
+    const requestHeaders = new Headers();
+    // Устанавливаем заголовок 'Cookie', который и будет прочитан FastAPI
+    requestHeaders.set('Cookie', `better-auth.session_token=${sessionTokenCookie.value}`);
+
+    try {
+        let response = await fetch(`${mainUrl}/main_api_app/dashboard`,
+            {cache: "no-cache", headers: requestHeaders});
+        if (!response.ok) {
+            if (response.status === 404) {
+                return false;
+            }
+            throw new Error("Ошибка соединения с сервером.");
+        }
+        let result = await response.json();
+        return result;
+    } catch (error) {
+        console.error("Ошибка при получении данных:", error);
+        return false;
     }
 }
