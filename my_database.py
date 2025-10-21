@@ -69,10 +69,13 @@ class BaseDao:
             *,
             session: AsyncSession,
             simple_filters: dict = None,
+            join_only_simple_filters_with_or: bool = False,
             load_relationships: list = None,
             search_in_many_to_many_field_using_and: dict = None,
-            join_only_simple_filters_with_or: bool = False,
-            columns_to_select: list = None
+            columns_to_select: list = None,
+            page: int = None,
+            size: int = None,
+            order_by: list = None,
     ):
         """
         Пример использования:
@@ -105,6 +108,12 @@ class BaseDao:
         columns_to_select
         usernames = await UserDao.universal_find_method(columns_to_select=[User.username])
         # Вернет: ['Alex', 'Bob', 'Charlie']
+
+        :param page: номер страницы. Если указать page - будет делаться 2 запроса в БД. Используется только в pagination методе и вернет не список ORM, словарь {'items': [food], 'total_pages': 2, 'current_page': 1}, где ORM содержится в items.
+        :param size: количество записей на странице. Используется только в pagination методе.
+
+
+        :param order_by: Список строк для сортировки. Можно использовать - как в Django для обратной сортировки.
 
         ВАЖНО: Параметры `columns_to_select` и `load_relationships` являются взаимоисключающими.
         `load_relationships` предназначен для загрузки связанных ОБЪЕКТОВ вместе с основным,
@@ -167,49 +176,120 @@ class BaseDao:
                 for v in values:
                     query = query.where(relationship_attr.any(field_attr == v))
 
-        #  Загрузка связанных данных ---
-        if load_relationships and not columns_to_select:
-            load_options = []
-            for item in load_relationships:
-                option = None
+        if order_by:
+            ordering_clauses = []
+            for field in order_by:
+                if field.startswith('-'):
+                    # Сортировка по убыванию
+                    column_name = field[1:]
+                    column_attr = getattr(cls.model, column_name, None)
+                    if column_attr:
+                        ordering_clauses.append(column_attr.desc())
+                else:
+                    # Сортировка по возрастанию
+                    column_attr = getattr(cls.model, field, None)
+                    if column_attr:
+                        ordering_clauses.append(column_attr.asc())
 
-                if isinstance(item, Load):
-                    option = item
+            if ordering_clauses:
+                query = query.order_by(*ordering_clauses)
 
-                elif isinstance(item, InstrumentedAttribute):
-                    option = joinedload(item)
+        if page is not None:
+            # РЕЖИМ ПАГИНАЦИИ
 
-                elif isinstance(item, str):
-                    current_model = cls.model
-                    option_chain = None
-                    parts = item.split('__')
-                    for part in parts:
-                        attr = getattr(current_model, part)
-                        if option_chain is None:
-                            option_chain = joinedload(attr)
-                        else:
-                            option_chain = option_chain.joinedload(attr)
-                        current_model = attr.entity.class_
-                    option = option_chain
+            # 1. Запрос COUNT, который использует уже построенные фильтры и join'ы
+            count_query = select(func.count(cls.model.id).distinct()).select_from(*query.get_final_froms())
 
-                if option:
-                    load_options.append(option)
+            if query.whereclause is not None:
+                count_query = count_query.where(query.whereclause)
 
-            if load_options:
-                query = query.options(*load_options)
-        # >>>>> КОНЕЦ ИЗМЕНЕНИЯ <<<<<
+            total_count_result = await session.execute(count_query)
+            total_count = total_count_result.scalar_one()
 
-        # --- ШАГ 4: Здесь ничего не меняется, код остается вашим ---
-        query = query.distinct()
-        result = await session.execute(query)
+            # это готовый словарь, если есть пагинация - {'items': [food], 'total_pages': 2, 'current_page': 1}.
+            if total_count == 0:
+                return {"items": [], "total_pages": 0, "current_page": page}
 
-        if columns_to_select:
-            if len(columns_to_select) == 1:
-                return result.scalars().all()
+            # 2. Основной запрос с LIMIT/OFFSET
+            total_pages = math.ceil(total_count / size)
+            offset = (page - 1) * size
+            final_query = query.limit(size).offset(offset)
+
+            # ВАША ЛОГИКА ЗАГРУЗКИ СВЯЗЕЙ ПРИМЕНЯЕТСЯ ЗДЕСЬ (1-В-1)
+            if load_relationships and not columns_to_select:
+                load_options = []
+                for item in load_relationships:
+                    option = None
+                    if isinstance(item, Load):
+                        option = item
+                    elif isinstance(item, InstrumentedAttribute):
+                        option = joinedload(item)
+                    elif isinstance(item, str):
+                        current_model = cls.model
+                        option_chain = None
+                        parts = item.split('__')
+                        for part in parts:
+                            attr = getattr(current_model, part)
+                            if option_chain is None:
+                                option_chain = joinedload(attr)
+                            else:
+                                option_chain = option_chain.joinedload(attr)
+                            current_model = attr.entity.class_
+                        option = option_chain
+                    if option: load_options.append(option)
+                if load_options: final_query = final_query.options(*load_options)
+
+            # ВАША ЛОГИКА ВЫПОЛНЕНИЯ И ВОЗВРАТА РЕЗУЛЬТАТА (1-В-1)
+            final_query = final_query.distinct()
+            result = await session.execute(final_query)
+
+            if columns_to_select:
+                items = result.scalars().all() if len(columns_to_select) == 1 else result.mappings().all()
             else:
-                return result.mappings().all()
+                items = result.unique().scalars().all()
+
+            return {"items": items, "total_pages": total_pages, "current_page": page}
+
         else:
-            return result.unique().scalars().all()
+            # ОБЫЧНЫЙ РЕЖИМ (ВАШ ОРИГИНАЛЬНЫЙ КОД 1-В-1)
+
+            # ВАША ЛОГИКА ЗАГРУЗКИ СВЯЗЕЙ (1-В-1)
+            if load_relationships and not columns_to_select:
+                load_options = []
+                for item in load_relationships:
+                    option = None
+                    if isinstance(item, Load):
+                        option = item
+                    elif isinstance(item, InstrumentedAttribute):
+                        option = joinedload(item)
+                    elif isinstance(item, str):
+                        current_model = cls.model
+                        option_chain = None
+                        parts = item.split('__')
+                        for part in parts:
+                            attr = getattr(current_model, part)
+                            if option_chain is None:
+                                option_chain = joinedload(attr)
+                            else:
+                                option_chain = option_chain.joinedload(attr)
+                            current_model = attr.entity.class_
+                        option = option_chain
+                    if option:
+                        load_options.append(option)
+                if load_options:
+                    query = query.options(*load_options)
+
+            # ВАША ЛОГИКА ВЫПОЛНЕНИЯ И ВОЗВРАТА РЕЗУЛЬТАТА (1-В-1)
+            query = query.distinct()
+            result = await session.execute(query)
+
+            if columns_to_select:
+                if len(columns_to_select) == 1:
+                    return result.scalars().all()
+                else:
+                    return result.mappings().all()
+            else:
+                return result.unique().scalars().all()
 
     @classmethod
     async def get_all_objects(cls, *, session: AsyncSession, load_relationships: list = None,
