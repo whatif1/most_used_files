@@ -629,9 +629,6 @@ class MyUniversaSessionClass:
         return DaoProxy()
 
 
-# Это "фабрика" или "менеджер" для работы с базой данных (для всего проекта), который будет активирован когда его будут использовать в async with. После этого он получает все таблицы из класса MyUniversaSessionClass и создаст одну общую сессию для всех таблиц для удобной работы с ними. Нам всегда нужна будет функция-последник для работы с данным методом (как в fastapi, python и везде); именно в этой функции мы активируем данную фабрику при помощи async with.
-my_universal_session = MyUniversaSessionClass()
-
 
 
 
@@ -678,6 +675,10 @@ async def universal_fastapi_db_transaction() -> MyUniversaSessionClass:
     """
     Эта зависимость FastAPI создает транзакцию для каждого запроса.
     """
+
+    # Это "фабрика" или "менеджер" для работы с базой данных (для всего проекта), который будет активирован когда его будут использовать в async with. После этого      он получает все таблицы из класса MyUniversaSessionClass и создаст одну общую сессию для всех таблиц для удобной работы с ними. Нам всегда нужна будет             функция-последник для работы с данным методом (как в fastapi, python и везде); именно в этой функции мы активируем данную фабрику при помощи async with.
+    my_universal_session = MyUniversaSessionClass()
+    
     async with my_universal_session as db:
         yield db
 
@@ -806,8 +807,7 @@ db: MyUniversaSessionClass = Depends(universal_fastapi_db_transaction)):
 
 import asyncio
 from sqlalchemy.orm import selectinload, joinedload
-from database.database_engine import Post, User, Like, UserDao, LikeDao, PostDao, MyUniversaSessionClass, \
-    my_universal_session
+from database.database_engine import Post, User, Like, UserDao, LikeDao, PostDao, MyUniversaSessionClass
 from functools import wraps
 
 
@@ -818,6 +818,7 @@ def run_in_one_transaction(db_function):
     """
     @wraps(db_function)
     async def wrapper(*args, **kwargs):
+        my_universal_session = MyUniversaSessionClass()
         async with my_universal_session as session:
             # Передаем менеджер `session` в декорируемую функцию в качестве первого аргумента. Вручную теперь сессию передавать не нужно
             result = await db_function(session, *args, **kwargs)
