@@ -63,6 +63,43 @@ class BaseDao:
 
     }
 
+
+
+    class BaseDao:
+    model = None
+
+    OPERATORS = {
+        "exact": operator.eq,  # равно ==. Точное совпадение с учетом регистра или пои цифрам
+        "iexact": lambda column, value: column.ilike(value),  # Точное совпадение без учета регистра в строках
+        "contains": lambda column, value: column.contains(value),  # искомое значение в строке с учетом регистра
+        # "icontains": lambda column, value: column.icontains(value), # искомое значение содержится в строке без учеата регистра
+        "icontains": lambda column, value: func.lower(column).contains(value.lower()),
+        # искомое значение содержится в строке без учета регистра
+        'gt': operator.gt,  # Больше (>)
+        'gte': operator.ge,  # Больше или равно (>=)
+        'lt': operator.lt,  # Меньше (<)
+        'lte': operator.le,  # Меньше или равно (<=)
+        'in': lambda column, value: column.in_(value),
+        # Проверяет, содержится ли значение в указанном списке значений. Ожидает [1, 5, 10, 15]
+        "range": lambda column, value: column.between(value[0], value[1]),  # проверяет, находится ли указанное
+        # значение между двумя значениями. Ожидает [10, 20].
+        "ne": operator.ne,  # "не равно" (!=)
+        "is_null": lambda column, value: column.is_(None) if value else column.is_not(None),  # проверка на Null
+        # Начинается с
+        "startswith": lambda column, value: column.startswith(value),
+        "istartswith": lambda column, value: column.istartswith(value),
+        # Заканчивается на
+        "endswith": lambda column, value: column.endswith(value),
+        "iendswith": lambda column, value: column.iendswith(value),
+
+        # Фильтры по дате/времени
+        "date": lambda column, value: func.date(column) == value,
+        "year": lambda column, value: extract('year', column) == value,
+        "month": lambda column, value: extract('month', column) == value,
+        "day": lambda column, value: extract('day', column) == value,
+
+    }
+
     @classmethod
     async def universal_find_method(
             cls,
@@ -236,8 +273,10 @@ class BaseDao:
                                 option_chain = option_chain.joinedload(attr)
                             current_model = attr.entity.class_
                         option = option_chain
-                    if option: load_options.append(option)
-                if load_options: final_query = final_query.options(*load_options)
+                    if option:
+                        load_options.append(option)
+                if load_options:
+                    final_query = final_query.options(*load_options)
 
             # ВАША ЛОГИКА ВЫПОЛНЕНИЯ И ВОЗВРАТА РЕЗУЛЬТАТА (1-В-1)
             final_query = final_query.distinct()
@@ -289,7 +328,7 @@ class BaseDao:
                 else:
                     return result.mappings().all()
             else:
-                return result.unique().scalars().all()
+                return result.unique().scalars().all()  
 
     @classmethod
     async def get_all_objects(cls, *, session: AsyncSession, load_relationships: list = None,
